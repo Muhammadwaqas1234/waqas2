@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import openai
 import boto3
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
@@ -9,25 +9,21 @@ from boto3.dynamodb.conditions import Key, Attr
 from llama_index.core import VectorStoreIndex, ServiceContext
 from llama_index.core.prompts.base import ChatPromptTemplate
 from llama_index.llms.openai import OpenAI
-from llama_index.core import SimpleDirectoryReader
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import fitz
 import base64
 import stripe
-from flask import Flask, request, render_template, jsonify
 from flask_mail import Mail, Message
+from llama_index.core import Document
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY")
 
-
-
+# Initialize DynamoDB resources
 dynamodb = boto3.resource('dynamodb', region_name='ap-southeast-2')
 dynamodb_client = boto3.client('dynamodb', region_name='ap-southeast-2')
 
-
-
+# Create or get reference to the DynamoDB tables
 def create_dynamodb_table(table_name, key_schema, attribute_definitions, provisioned_throughput, global_secondary_indexes=None):
     try:
         table_params = {
@@ -45,6 +41,7 @@ def create_dynamodb_table(table_name, key_schema, attribute_definitions, provisi
     except dynamodb_client.exceptions.ResourceInUseException:
         print(f"Table {table_name} already exists.")
 
+# Example table creation
 create_dynamodb_table(
     'Users',
     key_schema=[
@@ -107,18 +104,24 @@ create_dynamodb_table(
     }
 )
 
+# DynamoDB table references
 users_table = dynamodb.Table('Users')
 chat_history_table = dynamodb.Table('ChatHistory')
 feedback_table = dynamodb.Table('Feedback')
+pdf_content_table = dynamodb.Table('PDFContentTable')  # Add your table reference here
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 messages = []
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'  
+
+# Flask mail configuration
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'helpscai@gmail.com'  
-app.config['MAIL_PASSWORD'] = 'qihtnzfigqpjbjfm'  
-app.config['MAIL_DEFAULT_SENDER'] = 'helpscai@gmail.com'  
+app.config['MAIL_USERNAME'] = 'helpscai@gmail.com'
+app.config['MAIL_PASSWORD'] = 'qihtnzfigqpjbjfm'
+app.config['MAIL_DEFAULT_SENDER'] = 'helpscai@gmail.com'
+
+# API and Stripe keys
 openai_api_key = os.getenv('OPENAI_API_KEY')
 stripe_secret_key = os.getenv('STRIPE_SECRET_KEY')
 stripe_public_key = os.getenv('STRIPE_PUBLIC_KEY')
@@ -129,29 +132,33 @@ mail = Mail(app)
 def appendMessage(role, message, type='message'):
     messages.append({"role": role, "content": message, "type": type})
 
-
-pdf_dir="./data"
-
-def load_data():
-    reader = SimpleDirectoryReader(pdf_dir, recursive=True)
-    docs = reader.load_data()
+def load_data_from_dynamodb():
+    response = pdf_content_table.scan()
+    items = response.get('Items', [])
     
-    llm = OpenAI(model="gpt-3.5-turbo", temperature="0.1", systemprompt="""Use the books in data file as source for the answer. Generate a valid 
-                 and relevant answer to a query related to 
-                 construction problems, ensure the answer is based strictly on the content of 
-                 the book and not influenced by other sources. Do not hallucinate. The answer should 
+    # Create Document objects for each text entry
+    documents = [Document(text=item['text']) for item in items if 'text' in item]
+
+    llm = OpenAI(model="gpt-3.5-turbo", temperature="0.1", systemprompt="""Use the books in the database as a source for the answer. Generate a valid
+                 and relevant answer to a query related to
+                 construction problems, ensure the answer is based strictly on the content of
+                 the book and not influenced by other sources. Do not hallucinate. The answer should
                  be informative and fact-based. """)
     service_content = ServiceContext.from_defaults(llm=llm)
-    index = VectorStoreIndex.from_documents(docs, service_context=service_content)
+
+    # Initialize the VectorStoreIndex with Document objects
+    index = VectorStoreIndex.from_documents(documents, service_context=service_content)
     return index
 
+
+# Query the chatbot using the loaded index
 def query_chatbot(query_engine, user_question):
     response = query_engine.query(user_question)
     return response.response if response else None
 
-def initialize_chatbot(pdf_dir = "./data", model="gpt-3.5-turbo", temperature=0.4):
-    documents = SimpleDirectoryReader(pdf_dir).load_data()
-    llm = OpenAI(model=model, temperature=temperature)
+def initialize_chatbot():
+    # Use the index loaded from DynamoDB
+    index = load_data_from_dynamodb()
 
     additional_questions_prompt_str = (
         "Given the context below, generate only one additional question different from previous additional questions related to the user's query:\n"
@@ -165,8 +172,8 @@ def initialize_chatbot(pdf_dir = "./data", model="gpt-3.5-turbo", temperature=0.
         "New Context:\n"
         "User Query: {query_str}\n"
         "Chatbot Response: \n"
-        "Given the new context, generate only one additional questions different at each time from previous additional questions related to the user's query."
-        "If the context isn't useful, generate only one additional questions different at each from previous time from previous additional questions based on the original context.\n"
+        "Given the new context, generate only one additional question different at each time from previous additional questions related to the user's query."
+        "If the context isn't useful, generate only one additional question different at each from previous time from previous additional questions based on the original context.\n"
     )
 
     chat_text_qa_msgs = [
@@ -192,14 +199,138 @@ def initialize_chatbot(pdf_dir = "./data", model="gpt-3.5-turbo", temperature=0.
         ("user", new_context_prompt_str),
     ]
     refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
-    index = VectorStoreIndex.from_documents(documents)
+
+    # Use the index to create a query engine
     query_engine = index.as_query_engine(
         text_qa_template=text_qa_template,
         refine_template=refine_template,
-        llm=llm,
+        llm=index.service_context.llm,
     )
 
     return query_engine
+
+def generate_response(user_question):
+    user_id = session['user_id']
+    response = users_table.get_item(Key={'id': user_id})
+    user = response.get('Item')
+    user_language = user.get('language', 'en') if user else 'en'
+
+    chat_engine = initialize_chatbot()
+
+    response = chat_engine.query(user_question)
+    if response:
+        response_text = response.response
+
+        tts = gTTS(text=response_text, lang=user_language)
+        tts.save('output.wav')
+
+        with open('output.wav', 'rb') as audio_file:
+            audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
+
+        additional_questions = generate_additional_questions(response_text)
+        document_session = response_text
+
+        return response_text, additional_questions, audio_data, document_session
+
+    return None, None, None, None
+
+# Generate additional questions
+def generate_additional_questions(user_question):
+    additional_questions = []
+    words = ["1", "2", "3"]
+    for word in words:
+        # Initialize chatbot engine once and reuse
+        query_engine = initialize_chatbot()
+        question = query_chatbot(query_engine, user_question)
+        additional_questions.append(question if question else None)
+
+    return additional_questions
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    if 'username' not in session:
+        return jsonify({"error": "User not logged in"})
+
+    user_question = request.json["user_question"]
+    user_id = session['user_id']
+
+    response = users_table.get_item(Key={'id': user_id})
+    user = response.get('Item')
+    if user:
+        last_question_date = datetime.fromisoformat(user.get('last_question_date', '1970-01-01')).date()
+        current_date = datetime.utcnow().date()
+
+        if last_question_date < current_date:
+            user['question_count'] = 0
+
+        question_limit = 10 if user.get('user_type') == 'pro' else 5
+
+        if user['question_count'] >= question_limit:
+            return jsonify({"error": f"{user['user_type'].capitalize()} user has reached maximum question limit"})
+
+        user['question_count'] += 1
+        user['last_question_date'] = current_date.isoformat()
+        users_table.put_item(Item=user)
+
+        response_text, additional_questions, audio_data, document_session = generate_response(user_question)
+        appendMessage('user', user_question)
+        appendMessage('assistant', response_text, type='response')
+
+        session_id = str(uuid.uuid4())
+        session_name = ' '.join(user_question.split()[:4])
+        timestamp = datetime.utcnow().isoformat()
+        chat_history_table.put_item(
+            Item={
+                "session_id": session_id,
+                "user_id": user_id,
+                "session_name": session_name,
+                "start_time": timestamp,
+                "chat_history": messages,
+                "timestamp": timestamp
+            }
+        )
+
+        return jsonify({"response_text": response_text, "additional_questions": additional_questions, "audio_data": audio_data, "document_session": document_session})
+
+    return jsonify({"error": "User not found"})
+
+def time_since(timestamp):
+    now = datetime.utcnow()
+    time_diff = now - timestamp
+
+    if time_diff < timedelta(minutes=1):
+        return "just now"
+    elif time_diff < timedelta(hours=1):
+        return f"{int(time_diff.total_seconds() // 60)} minutes ago"
+    elif time_diff < timedelta(days=1):
+        return f"{int(time_diff.total_seconds() // 3600)} hours ago"
+    elif time_diff < timedelta(weeks=1):
+        return f"{int(time_diff.total_seconds() // 86400)} days ago"
+    else:
+        return f"{int(time_diff.total_seconds() // 604800)} weeks ago"
+
+@app.route("/history")
+def history():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    response = chat_history_table.query(
+        KeyConditionExpression=Key('user_id').eq(user_id),
+        ScanIndexForward=False
+    )
+    items = response['Items']
+    chat_history = []
+    for item in items:
+        timestamp = datetime.fromisoformat(item['start_time'])
+        chat_history.append({
+            "session_name": item['session_name'],
+            "time_since": time_since(timestamp),
+            "chat_history": item['chat_history']
+        })
+
+    return render_template("history.html", chat_history=chat_history)
+
 
 @app.route('/send-email', methods=['POST'])
 def send_email():
@@ -241,48 +372,16 @@ def save_language():
 
     return jsonify({"error": "User not found"}), 404
 
-def generate_response(user_question):
-    user_id = session['user_id']
-    response = users_table.get_item(Key={'id': user_id})
-    user = response.get('Item')
-    user_language = user.get('language', 'en') if user else 'en'
-
-    index = load_data()
-    chat_engine = index.as_chat_engine(chat_mode="condense_question", verbose=True)
-
-    response = chat_engine.chat(user_question)
-    if response:
-        response_text = response.response
-
-        tts = gTTS(text=response_text, lang=user_language)
-        tts.save('output.wav')
-
-        with open('output.wav', 'rb') as audio_file:
-            audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
-
-        additional_questions = generate_additional_questions(response_text)
-        document_session = response_text
-
-        return response_text, additional_questions, audio_data, document_session
-
-    return None, None, None, None
 
 
-def generate_additional_questions(user_question):
-    additional_questions = []
-    words = ["1", "2", "3"]
-    for word in words:
-        question = query_chatbot(initialize_chatbot(), user_question)
-        additional_questions.append(question if question else None)
-
-    return additional_questions
 
 
 
 @app.route("/")
 def home():
     if 'username' in session:
-        return render_template("index.html" , messages=messages)
+        user = session.get("user")
+        return render_template("index.html" , messages=messages , user=user)
     return render_template("home.html")
 
 @app.route("/index")
@@ -363,55 +462,6 @@ def login():
     return render_template("login.html")
 
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    if 'username' not in session:
-        return jsonify({"error": "User not logged in"})
-
-    user_question = request.json["user_question"]
-    user_id = session['user_id']
-
-    response = users_table.get_item(Key={'id': user_id})
-    user = response.get('Item')
-    if user:
-        last_question_date = datetime.fromisoformat(user.get('last_question_date', '1970-01-01')).date()
-        current_date = datetime.utcnow().date()
-
-        if last_question_date < current_date:
-            user['question_count'] = 0
-
-        question_limit = 10 if user.get('user_type') == 'pro' else 5
-
-        if user['question_count'] >= question_limit:
-            return jsonify({"error": f"{user['user_type'].capitalize()} user has reached maximum question limit"})
-
-        user['question_count'] += 1
-        user['last_question_date'] = current_date.isoformat()
-        users_table.put_item(Item=user)
-
-        response_text, additional_questions, audio_data, document_session = generate_response(user_question)
-        appendMessage('user', user_question)
-        appendMessage('assistant', response_text, type='response')
-
-        
-        session_id = str(uuid.uuid4())
-        session_name = ' '.join(user_question.split()[:4])  
-        timestamp = datetime.utcnow().isoformat()  
-        chat_history_table.put_item(
-            Item={
-                "session_id": session_id,
-                "user_id": user_id,
-                "session_name": session_name,
-                "start_time": timestamp,
-                "chat_history": messages,
-                "timestamp": timestamp  
-            }
-        )
-
-        return jsonify({"response_text": response_text, "additional_questions": additional_questions, "audio_data": audio_data, "document_session": document_session})
-
-    return jsonify({"error": "User not found"})
-
 
 
 
@@ -474,42 +524,10 @@ def terms():
 
 from datetime import datetime, timedelta
 
-def time_since(timestamp):
-    now = datetime.utcnow()
-    time_diff = now - timestamp
 
-    if time_diff < timedelta(minutes=1):
-        return "just now"
-    elif time_diff < timedelta(hours=1):
-        return f"{int(time_diff.total_seconds() // 60)} minutes ago"
-    elif time_diff < timedelta(days=1):
-        return f"{int(time_diff.total_seconds() // 3600)} hours ago"
-    elif time_diff < timedelta(weeks=1):
-        return f"{int(time_diff.total_seconds() // 86400)} days ago"
-    else:
-        return f"{int(time_diff.total_seconds() // 604800)} weeks ago"
-
-@app.route("/history")
-def history():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-
-    user_id = session['user_id']
-    response = chat_history_table.query(
-        KeyConditionExpression=Key('user_id').eq(user_id),
-        ScanIndexForward=False  
-    )
-    items = response['Items']
-    chat_history = []
-    for item in items:
-        timestamp = datetime.fromisoformat(item['start_time'])
-        chat_history.append({
-            "session_name": item['session_name'],
-            "time_since": time_since(timestamp),
-            "chat_history": item['chat_history']
-        })
-
-    return render_template("history.html", chat_history=chat_history)
+@app.route('/condition')
+def condition():
+    return render_template('condition.html')
 
 
 @app.route("/support", methods=["GET", "POST"])
