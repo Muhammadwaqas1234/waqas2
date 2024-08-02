@@ -135,10 +135,14 @@ def appendMessage(role, message, type='message'):
 def load_data_from_dynamodb():
     response = pdf_content_table.scan()
     items = response.get('Items', [])
+
+    
     
     # Create Document objects for each text entry
     documents = [Document(text=item['text']) for item in items if 'text' in item]
 
+    
+    
     llm = OpenAI(model="gpt-3.5-turbo", temperature="0.1", systemprompt="""Use the books in the database as a source for the answer. Generate a valid
                  and relevant answer to a query related to
                  construction problems, ensure the answer is based strictly on the content of
@@ -148,13 +152,18 @@ def load_data_from_dynamodb():
 
     # Initialize the VectorStoreIndex with Document objects
     index = VectorStoreIndex.from_documents(documents, service_context=service_content)
+    
+    
     return index
 
 
-# Query the chatbot using the loaded index
+
 def query_chatbot(query_engine, user_question):
+    print("User question:", user_question)
     response = query_engine.query(user_question)
+    print("Chatbot response:", response)
     return response.response if response else None
+
 
 def initialize_chatbot():
     # Use the index loaded from DynamoDB
@@ -294,6 +303,7 @@ def chat():
 
     return jsonify({"error": "User not found"})
 
+
 def time_since(timestamp):
     now = datetime.utcnow()
     time_diff = now - timestamp
@@ -330,6 +340,7 @@ def history():
         })
 
     return render_template("history.html", chat_history=chat_history)
+
 
 
 @app.route('/send-email', methods=['POST'])
