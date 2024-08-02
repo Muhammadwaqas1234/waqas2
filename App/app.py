@@ -224,9 +224,10 @@ def generate_response(user_question):
     user = response.get('Item')
     user_language = user.get('language', 'en') if user else 'en'
 
-    chat_engine = initialize_chatbot()
+    index = load_data_from_dynamodb()
 
-    response = chat_engine.query(user_question)
+    chat_engine = index.as_chat_engine(chat_mode="condense_question", verbose=True)
+    response = chat_engine.chat(user_question)
     if response:
         response_text = response.response
 
@@ -340,7 +341,6 @@ def history():
         })
 
     return render_template("history.html", chat_history=chat_history)
-
 
 
 @app.route('/send-email', methods=['POST'])
@@ -536,9 +536,6 @@ def terms():
 from datetime import datetime, timedelta
 
 
-@app.route('/condition')
-def condition():
-    return render_template('condition.html')
 
 
 @app.route("/support", methods=["GET", "POST"])
