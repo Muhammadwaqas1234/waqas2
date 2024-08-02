@@ -133,15 +133,10 @@ def appendMessage(role, message, type='message'):
     messages.append({"role": role, "content": message, "type": type})
 
 def load_data_from_dynamodb():
+    global cache
     response = pdf_content_table.scan()
     items = response.get('Items', [])
-
-    
-    
-    # Create Document objects for each text entry
     documents = [Document(text=item['text']) for item in items if 'text' in item]
-
-    
     
     llm = OpenAI(model="gpt-3.5-turbo", temperature="0.1", systemprompt="""Use the books in the database as a source for the answer. Generate a valid
                  and relevant answer to a query related to
@@ -149,14 +144,13 @@ def load_data_from_dynamodb():
                  the book and not influenced by other sources. Do not hallucinate. The answer should
                  be informative and fact-based. """)
     service_content = ServiceContext.from_defaults(llm=llm)
-
-    # Initialize the VectorStoreIndex with Document objects
+    
     index = VectorStoreIndex.from_documents(documents, service_context=service_content)
     
-    
-    return index
+    cache['index'] = index
 
-
+# Initialize cache on startup
+load_data_from_dynamodb()
 
 def query_chatbot(query_engine, user_question):
     print("User question:", user_question)
@@ -166,9 +160,11 @@ def query_chatbot(query_engine, user_question):
 
 
 def initialize_chatbot():
-    # Use the index loaded from DynamoDB
-    index = load_data_from_dynamodb()
-
+    index = cache.get('index')
+    if not index:
+        load_data_from_dynamodb()
+        index = cache.get('index')
+    
     additional_questions_prompt_str = (
         "Given the context below, generate only one additional question different from previous additional questions related to the user's query:\n"
         "Context:\n"
@@ -209,7 +205,6 @@ def initialize_chatbot():
     ]
     refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
 
-    # Use the index to create a query engine
     query_engine = index.as_query_engine(
         text_qa_template=text_qa_template,
         refine_template=refine_template,
@@ -224,7 +219,10 @@ def generate_response(user_question):
     user = response.get('Item')
     user_language = user.get('language', 'en') if user else 'en'
 
-    index = load_data_from_dynamodb()
+    index = cache.get('index')
+    if not index:
+        load_data_from_dynamodb()
+        index = cache.get('index')
 
     chat_engine = index.as_chat_engine(chat_mode="condense_question", verbose=True)
     response = chat_engine.chat(user_question)
@@ -244,17 +242,18 @@ def generate_response(user_question):
 
     return None, None, None, None
 
-# Generate additional questions
+
+
 def generate_additional_questions(user_question):
     additional_questions = []
     words = ["1", "2", "3"]
     for word in words:
-        # Initialize chatbot engine once and reuse
         query_engine = initialize_chatbot()
         question = query_chatbot(query_engine, user_question)
         additional_questions.append(question if question else None)
 
     return additional_questions
+
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -303,8 +302,6 @@ def chat():
         return jsonify({"response_text": response_text, "additional_questions": additional_questions, "audio_data": audio_data, "document_session": document_session})
 
     return jsonify({"error": "User not found"})
-
-
 def time_since(timestamp):
     now = datetime.utcnow()
     time_diff = now - timestamp
@@ -403,6 +400,9 @@ def index():
     return redirect(url_for("login"))
 
 
+@app.route('/condition')
+def condition():
+    return render_template('condition.html')
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
