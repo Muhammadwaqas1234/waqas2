@@ -1332,16 +1332,14 @@ document.addEventListener('DOMContentLoaded', function() {
     
 
 
-        $(document).ready(function() {
+    $(document).ready(function() {
     const $userInput = $('#user-input');
     const $voiceButton = $('#voice-command-button');
     const $sendButton = $('#send-button');
     const $chatMessages = $('#chat-messages');
-    const documentSessionContainer = document.getElementById('document-session-container');
     const $chatContainer = $('.chat-container');
-
      
-     $('#user-input').click(function() {
+    $('#user-input').click(function() {
         // Check if sidebar is open and close it
         if ($('body').hasClass('sidebar-opened')) {
             $('body').removeClass('sidebar-opened');
@@ -1350,6 +1348,7 @@ document.addEventListener('DOMContentLoaded', function() {
             adjustInputWidth(); // Adjust input width if needed
         }
     });
+
     function clearChatHistory() {
         $('#chat-messages').empty(); // Clear the chat messages container
         localStorage.removeItem('chatHistory'); // Remove chat history from local storage
@@ -1364,145 +1363,55 @@ document.addEventListener('DOMContentLoaded', function() {
         $userInput.val(question);
         sendMessage();
     }
-    function appendAdditionalQuestion(question) {
-    const additionalQuestionElement = $('<div class="additional-question"></div>').text(question);
-    additionalQuestionElement.on('click', function() {
-        $userInput.val(question);
-        sendMessage();
-    });
-    $chatMessages.append(additionalQuestionElement);
-    
-    
-}
-   
 
+    function appendAdditionalQuestion(question) {
+        const additionalQuestionElement = $('<div class="additional-question"></div>').text(question);
+        additionalQuestionElement.on('click', function() {
+            $userInput.val(question);
+            sendMessage();
+        });
+        $chatMessages.append(additionalQuestionElement);
+    }
 
     // Function to handle backend response
     function handleResponse(response) {
-        const { response_text, additional_questions, audio_data, document_session } = response;
+        const { response_text, additional_questions } = response;
 
-         // Display the response text in the chat interface
-         appendMessage('assistant', response_text, 'response');
-          // Check if audio data is available
-    if (audio_data) {
-        // Create an audio element
-        const audioElement = document.createElement('audio');
-        audioElement.setAttribute('controls', ''); // Add controls for playback
-        audioElement.src = 'data:audio/wav;base64,' + audio_data; // Set audio source
-        audioElement.style.display = 'none'; // Hide the audio player initially
-
-        // Create a button to trigger audio playback
-        const audioButton = document.createElement('button');
-        audioButton.id = 'listen-btn'; // Set button id for styling
-
-        // Create an image element for the button
-        const audioImage = document.createElement('img');
-        audioImage.src = '/static/img/WhatsApp Image 2024-05-22 at 02.14.16_6f498517.jpg'; 
-        audioImage.alt = 'Listen to Audio'; 
-        audioImage.style.width = '38px';
-        audioImage.style.height = '30px'; 
-        audioImage.style.marginRight = '0px'; 
-        let isPlaying = false; 
-        audioButton.appendChild(audioImage); 
-        audioButton.addEventListener('click', function() {
-            if (!isPlaying) {
-                audioElement.play(); 
-                audioImage.src = '/static/img/WhatsApp Image 2024-05-22 at 02.14.16_6f498517.jpg'; 
-                audioImage.alt = 'Pause the Audio'; 
-                isPlaying = true; 
-            } else {
-                audioElement.pause(); 
-                audioImage.src = '/static/img/WhatsApp Image 2024-05-22 at 02.14.16_6f498517.jpg'; 
-                audioImage.alt = 'Listen to Audio'; 
-                isPlaying = false; 
-            }
-        });
-
-
-
-        // Append the audio button and audio element to the chat interface
-        $chatMessages.append(audioButton);
-        $chatMessages.append(audioElement);
-        scrollChatContainerToBottom();
-    }
-    
-   
-    
+        // Display the response text in the chat interface
+        appendMessage('assistant', response_text, 'response');
         
-       if (additional_questions && additional_questions.length > 0) {
+        if (additional_questions && additional_questions.length > 0) {
             additional_questions.forEach((question) => {
                 appendAdditionalQuestion(question);
             });
         }
 
-
- // Create a button element
-const button = document.createElement('button');
-button.innerHTML = '<img src="/static/img/png-transparent-computer-icons-book-book-cover-angle-recycling-logo-thumbnail-removebg-preview.png" alt="Reference" style="width:30px;height: 30px;">';
-
-// Variable to keep track of the document session display state
-let isDocumentSessionVisible = false;
-let documentSessionElement = null;
-
-button.addEventListener('click', function() {
-    if (isDocumentSessionVisible) {
-        // Hide the document session content
-        if (documentSessionElement) {
-            documentSessionElement.remove();
-            documentSessionElement = null;
-        }
-    } else {
-        // Display the document session content in the response area
-        if (document_session) {
-            documentSessionElement = document.createElement('div');
-            documentSessionElement.classList.add('response');
-            documentSessionElement.textContent = document_session;
-            $chatMessages.append(documentSessionElement);
-        }
-    }
-    // Toggle the document session display state
-    isDocumentSessionVisible = !isDocumentSessionVisible;
-});
-
-// Apply CSS styles to the button
-button.style.background = 'none';
-button.style.border = 'none';
-button.style.padding = '0';
-button.style.cursor = 'pointer';
-
-// Append the button to the chat interface
-$chatMessages.append(button);
- // Handle additional questions, document session, etc.
-
-
-// Function to scroll chat container to bottom
-function scrollChatContainerToBottom() {
-    $chatContainer.scrollTop($chatContainer[0].scrollHeight);
-}
-    
+        // Function to scroll chat container to bottom
+        scrollChatContainerToBottom();
     } 
 
     // Function to send user message to the backend and handle response
     function sendMessageToBackend(message) {
         // Show loading animation
-    $('#loading-animation').show();
+        $('#loading-animation').show();
         $.ajax({
             type: 'POST',
             url: '/chat', // Backend endpoint URL
             contentType: 'application/json',
             data: JSON.stringify({ user_question: message }),
             success: function(response) {
-                 // Hide loading animation
-            $('#loading-animation').hide();
+                // Hide loading animation
+                $('#loading-animation').hide();
                 handleResponse(response);
             },
             error: function(xhr, status, error) {
                 console.error('Error sending message:', error);
-                 // Hide loading animation in case of error
-            $('#loading-animation').hide();
+                // Hide loading animation in case of error
+                $('#loading-animation').hide();
             }
         });
     }
+
     // Function to toggle between voice and send buttons based on input value
     function toggleButtons() {
         const inputValue = $userInput.val().trim();
@@ -1533,12 +1442,11 @@ function scrollChatContainerToBottom() {
     });
 
     // Function to save chat history in local storage
-function saveChatHistory(role, message) {
-    let chatHistory = JSON.parse(localStorage.getItem('chatHistory')) || [];
-    chatHistory.push({ role, text: message });
-    localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
-}
-
+    function saveChatHistory(role, message) {
+        let chatHistory = JSON.parse(localStorage.getItem('chatHistory')) || [];
+        chatHistory.push({ role, text: message });
+        localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+    }
 
     // Function to append message to chat interface with specific message type
     function appendMessage(role, message, type) {
@@ -1557,13 +1465,13 @@ function saveChatHistory(role, message) {
         $chatMessages.append(messageElement);
         saveChatHistory(role, message); // Save message to chat history
         // Scroll chat container to bottom
-    scrollChatContainerToBottom();
-    
+        scrollChatContainerToBottom();
     }
+
     // Function to scroll chat container to bottom
-function scrollChatContainerToBottom() {
-    $chatContainer.scrollTop($chatContainer[0].scrollHeight);
-}
+    function scrollChatContainerToBottom() {
+        $chatContainer.scrollTop($chatContainer[0].scrollHeight);
+    }
    
     // Voice command button click event
     $('#voice-command-button').click(function() {
@@ -1581,40 +1489,40 @@ function scrollChatContainerToBottom() {
         };
         recognition.start();
     }
-     // Function to show chat history
-     function showChatHistory() {
-            // Assuming this function displays chat history (not defined in the provided code)
-        }
 
-        // Function to start a new chat and refresh the page
-        function newChat() {
-            location.reload(); // Reload the page
-        }
-        
-        
+    // Function to show chat history
+    function showChatHistory() {
+        // Assuming this function displays chat history (not defined in the provided code)
+    }
 
-        // Open sidebar button click event
-        $('#open-sidebar-btn').click(function() {
-            $('body').addClass('sidebar-opened');
-            $('#open-sidebar-btn').hide();
-            $('.close-sidebar-btn').show();
-            adjustInputWidth();
-        });
+    // Function to start a new chat and refresh the page
+    function newChat() {
+        location.reload(); // Reload the page
+    }
 
-        // Close sidebar button click event
-        $('.close-sidebar-btn').click(function() {
-            $('body').removeClass('sidebar-opened');
-            $('#open-sidebar-btn').show();
-            $('.close-sidebar-btn').hide();
-            adjustInputWidth();
-        });
+    // Open sidebar button click event
+    $('#open-sidebar-btn').click(function() {
+        $('body').addClass('sidebar-opened');
+        $('#open-sidebar-btn').hide();
+        $('.close-sidebar-btn').show();
+        adjustInputWidth();
+    });
 
-        // Automatically close sidebar when the page loads
+    // Close sidebar button click event
+    $('.close-sidebar-btn').click(function() {
         $('body').removeClass('sidebar-opened');
         $('#open-sidebar-btn').show();
         $('.close-sidebar-btn').hide();
-        adjustInputWidth(); // Assuming this function is defined elsewhere
-    }); 
+        adjustInputWidth();
+    });
+
+    // Automatically close sidebar when the page loads
+    $('body').removeClass('sidebar-opened');
+    $('#open-sidebar-btn').show();
+    $('.close-sidebar-btn').hide();
+    adjustInputWidth(); // Assuming this function is defined elsewhere
+});
+
     document.addEventListener('DOMContentLoaded', () => {
     const settingsLink = document.getElementById('settings-link');
     const settingsPopup = document.getElementById('settings-popup');
