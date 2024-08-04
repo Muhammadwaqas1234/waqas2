@@ -132,6 +132,8 @@ mail = Mail(app)
 def appendMessage(role, message, type='message'):
     messages.append({"role": role, "content": message, "type": type})
 
+cache = {}
+
 def load_data_from_dynamodb():
     global cache
     response = pdf_content_table.scan()
@@ -153,9 +155,9 @@ def load_data_from_dynamodb():
 load_data_from_dynamodb()
 
 def query_chatbot(query_engine, user_question):
-    print("User question:", user_question)
+   
     response = query_engine.query(user_question)
-    print("Chatbot response:", response)
+   
     return response.response if response else None
 
 
@@ -166,28 +168,28 @@ def initialize_chatbot():
         index = cache.get('index')
     
     additional_questions_prompt_str = (
-        "Given the context below, generate only one additional question different from previous additional questions related to the user's query:\n"
+        "Given the context below, generate one additional and more specific question in one line related to the user's query:\n"
         "Context:\n"
         "User Query: {query_str}\n"
         "Chatbot Response: \n"
     )
 
     new_context_prompt_str = (
-        "We have the opportunity to only one generate additional question different from previous additional questions based on new context.\n"
+        "We have the opportunity to generate one additional and more specific question in one line based on new context.\n"
         "New Context:\n"
         "User Query: {query_str}\n"
         "Chatbot Response: \n"
-        "Given the new context, generate only one additional question different at each time from previous additional questions related to the user's query."
-        "If the context isn't useful, generate only one additional question different at each from previous time from previous additional questions based on the original context.\n"
+        "Given the new context, generate one additional and more specific question in one line related to the user's query."
+        "If the context isn't useful, generate one additional and more specific question in one line based on the original context.\n"
     )
 
     chat_text_qa_msgs = [
         (
             "system",
-            """Generate only one additional question that facilitates deeper exploration of the main topic 
-            discussed in the user's query and the chatbot's response. The question should be relevant and
-              insightful, encouraging further discussion and exploration of the topic. Keep the question concise 
-              and focused on different aspects of the main topic to provide a comprehensive understanding.""",
+            """Generate one additional and more specific question in one line that facilitates deeper exploration of a precise aspect
+            of the main topic discussed in the user's query and the chatbot's response. The question should be relevant and
+            insightful, encouraging further discussion and exploration of a particular element of the topic. Keep the question concise
+            and focused on a specific aspect to provide a comprehensive understanding.""",
         ),
         ("user", additional_questions_prompt_str),
     ]
@@ -197,8 +199,8 @@ def initialize_chatbot():
         (
             "system",
             """Based on the user's question '{prompt}' and the chatbot's response '{response}', please 
-            generate only one additional question related to the main topic. The question should be 
-            insightful and encourage further exploration of the main topic, providing a more comprehensive 
+            generate one additional and more specific question in one line related to a precise aspect of the main topic. The question should be 
+            insightful and encourage further exploration of that particular aspect, providing a more comprehensive 
             understanding of the subject matter.""",
         ),
         ("user", new_context_prompt_str),
@@ -229,18 +231,12 @@ def generate_response(user_question):
     if response:
         response_text = response.response
 
-        tts = gTTS(text=response_text, lang=user_language)
-        tts.save('output.wav')
-
-        with open('output.wav', 'rb') as audio_file:
-            audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
-
+        
         additional_questions = generate_additional_questions(response_text)
-        document_session = response_text
+        
+        return response_text, additional_questions
 
-        return response_text, additional_questions, audio_data, document_session
-
-    return None, None, None, None
+    return None, None
 
 
 
